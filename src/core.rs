@@ -50,7 +50,7 @@ pub struct Address {
 }
 
 lazy_static::lazy_static! {
-    pub static ref ADDR_REGEX: Regex = Regex::new(r#"(?x)
+    pub(crate) static ref ADDR_REGEX: Regex = Regex::new(r#"(?x)
         \[           # opening square bracket
         (\s)*            # optional whitespace
             "(?P<host>[^"]+)"   # host name  (string)
@@ -60,7 +60,7 @@ lazy_static::lazy_static! {
         (\s)*            # optional whitespace
         \]           # closing square bracket
     "#).expect("Failed to compile regex: ADDR_REGEX");
-    pub static ref ADDR_LIST_REGEX: Regex = Regex::new(r#"(?x)
+    pub(crate) static ref ADDR_LIST_REGEX: Regex = Regex::new(r#"(?x)
         \[       # opening square bracket (list)
         (\s)*        # optional whitespace
             (?P<elements>(
