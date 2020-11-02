@@ -17,7 +17,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 #[serde(bound = "X: serde::de::Deserialize<'de>")]
 pub struct BasicSettings<X> {
     pub hosts: Vec<Address>,
