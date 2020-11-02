@@ -8,7 +8,7 @@ Add this to your `Cargo.toml`:
 
 ``` toml
 [dependencies]
-actix-toml = "0.2"
+actix-toml = "0.4"
 actix-web  = "3.1"
 env_logger = "0.8"
 ```
@@ -19,15 +19,14 @@ Import these items into your crate:
 
 ``` rust
 use actix_toml::{ApplySettings, AtResult, Settings};
+use actix_web::http::ContentEncoding;
+use std::sync::Arc;
 ```
 
 They can be used like this:
 ``` rust
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
-    use std::sync::Arc;
-    use actix_web::http::ContentEncoding;
-
     let mut settings = Settings::parse_toml("Server.toml")
         .expect("Failed to parse `Settings` from Server.toml");
     // If the environment variable `$APPLICATION__HOSTS` is set,
