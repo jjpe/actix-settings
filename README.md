@@ -1,6 +1,6 @@
 # actix-toml
 
-A Rust crate that allows for configuring `actix-web`'s (HttpServer)[https://docs.rs/actix-web/3.1.0/actix_web/struct.HttpServer.html] instance through a `TOML` file.
+A Rust crate that allows for configuring `actix-web`'s [HttpServer](https://docs.rs/actix-web/3.1.0/actix_web/struct.HttpServer.html) instance through a `TOML` file.
 
 ## Usage
 
