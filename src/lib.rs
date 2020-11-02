@@ -297,8 +297,6 @@ mod tests {
         assert!(!settings.ssl.enabled);
         Settings::override_field(&mut settings.ssl.enabled, "true")?;
         assert!(settings.ssl.enabled);
-        Settings::override_field(&mut settings.ssl.enabled, "false")?;
-        assert!(!settings.ssl.enabled);
         Ok(())
     }
 
@@ -312,11 +310,6 @@ mod tests {
             &mut settings.ssl.enabled, "APPLY_TOML_AND_ENV_VARS__SSL_ENABLED"
         )?;
         assert!(settings.ssl.enabled);
-        std::env::set_var("APPLY_TOML_AND_ENV_VARS__SSL_ENABLED", "false");
-        Settings::override_field_with_env_var(
-            &mut settings.ssl.enabled, "APPLY_TOML_AND_ENV_VARS__SSL_ENABLED"
-        )?;
-        assert!(!settings.ssl.enabled);
         Ok(())
     }
 
