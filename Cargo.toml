@@ -1,6 +1,6 @@
 [package]
-version = "0.2.0"
 name = "actix-settings"
+version = "0.3.0"
 authors = ["Joey Ezechiels <joey.ezechiels@gmail.com>"]
 edition = "2018"
 
