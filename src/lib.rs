@@ -293,10 +293,12 @@ mod tests {
             Address { host: "0.0.0.0".into(),   port: 9000 },
         ]);
         Settings::override_field(&mut settings.hosts, r#"[
-            ["0.0.0.0", 1234],
+            ["0.0.0.0",   1234],
+            ["localhost", 2345]
         ]"#)?;
         assert_eq!(settings.hosts, vec![
             Address { host: "0.0.0.0".into(),   port: 1234 },
+            Address { host: "localhost".into(), port: 2345 },
         ]);
         Ok(())
     }
