@@ -655,10 +655,10 @@ mod tests {
         }
         type CustomSettings = BasicSettings<CustomFields>;
         let mut settings = CustomSettings::from_template(&(
-            CustomSettings::DEFAULT_TOML_TEMPLATE.to_string() + "\n"
+            CustomSettings::DEFAULT_TOML_TEMPLATE.to_string()
                 // NOTE: Add these entries to the `[extended-fields]` table:
-                + "example-name = \"example value\"\n"
-                + "nested-field = { foo = \"foo\", bar = false }"
+                + "\nexample-name = \"example value\""
+                + "\nnested-field = { foo = \"foo\", bar = false }"
         ))?;
         assert_eq!(settings.extended_fields, CustomFields {
             example_name: "example value".into(),
