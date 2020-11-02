@@ -241,12 +241,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
+
     use actix_web::App;
     use crate::core::Address;
     use super::*;
 
     #[test]
-    #[allow(non_snake_case)]
     fn apply_settings() -> Result<()> {
         let settings = Settings::parse_toml("Server.toml")?;
         let _ = HttpServer::new(|| { App::new() }).apply_settings(&settings);
@@ -254,7 +255,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
     fn override_field__hosts() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
         assert_eq!(settings.hosts, vec![
@@ -270,18 +270,17 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
     fn override_field_with_env_var__hosts() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
         assert_eq!(settings.hosts, vec![
             Address { host: "0.0.0.0".into(),   port: 9000 },
         ]);
-        std::env::set_var("APPLY_TOML_AND_ENV_VARS__HOSTS", r#"[
+        std::env::set_var("OVERRIDE__HOSTS", r#"[
             ["0.0.0.0",   1234],
             ["localhost", 2345]
         ]"#);
         Settings::override_field_with_env_var(
-            &mut settings.hosts, "APPLY_TOML_AND_ENV_VARS__HOSTS"
+            &mut settings.hosts, "OVERRIDE__HOSTS"
         )?;
         assert_eq!(settings.hosts, vec![
             Address { host: "0.0.0.0".into(),   port: 1234 },
@@ -291,8 +290,240 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn override_field__ssl_enabled() -> Result<()> {
+    fn override_field__mode() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.mode, Mode::Development);
+        Settings::override_field(&mut settings.mode, "production")?;
+        assert_eq!(settings.mode, Mode::Production);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__mode() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.mode, Mode::Development);
+        std::env::set_var("OVERRIDE__MODE", "production");
+        Settings::override_field_with_env_var(
+            &mut settings.mode, "OVERRIDE__MODE"
+        )?;
+        assert_eq!(settings.mode, Mode::Production);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__enable_compression() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert!(settings.enable_compression);
+        Settings::override_field(&mut settings.enable_compression, "false")?;
+        assert!(!settings.enable_compression);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__enable_compression() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert!(settings.enable_compression);
+        std::env::set_var("OVERRIDE__ENABLE_COMPRESSION", "false");
+        Settings::override_field_with_env_var(
+            &mut settings.enable_compression, "OVERRIDE__ENABLE_COMPRESSION"
+        )?;
+        assert!(!settings.enable_compression);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__enable_log() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert!(settings.enable_log);
+        Settings::override_field(&mut settings.enable_log, "false")?;
+        assert!(!settings.enable_log);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__enable_log() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert!(settings.enable_log);
+        std::env::set_var("OVERRIDE__ENABLE_LOG", "false");
+        Settings::override_field_with_env_var(
+            &mut settings.enable_log, "OVERRIDE__ENABLE_LOG"
+        )?;
+        assert!(!settings.enable_log);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__num_workers() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.num_workers, NumWorkers::Default);
+        Settings::override_field(&mut settings.num_workers, "42")?;
+        assert_eq!(settings.num_workers, NumWorkers::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__num_workers() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.num_workers, NumWorkers::Default);
+        std::env::set_var("OVERRIDE__NUM_WORKERS", "42");
+        Settings::override_field_with_env_var(
+            &mut settings.num_workers, "OVERRIDE__NUM_WORKERS"
+        )?;
+        assert_eq!(settings.num_workers, NumWorkers::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__backlog() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.backlog, Backlog::Default);
+        Settings::override_field(&mut settings.backlog, "42")?;
+        assert_eq!(settings.backlog, Backlog::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__backlog() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.backlog, Backlog::Default);
+        std::env::set_var("OVERRIDE__BACKLOG", "42");
+        Settings::override_field_with_env_var(
+            &mut settings.backlog, "OVERRIDE__BACKLOG"
+        )?;
+        assert_eq!(settings.backlog, Backlog::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__max_connections() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.max_connections, MaxConnections::Default);
+        Settings::override_field(&mut settings.max_connections, "42")?;
+        assert_eq!(settings.max_connections, MaxConnections::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__max_connections() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.max_connections, MaxConnections::Default);
+        std::env::set_var("OVERRIDE__MAX_CONNECTIONS", "42");
+        Settings::override_field_with_env_var(
+            &mut settings.max_connections, "OVERRIDE__MAX_CONNECTIONS"
+        )?;
+        assert_eq!(settings.max_connections, MaxConnections::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__max_connection_rate() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.max_connection_rate, MaxConnectionRate::Default);
+        Settings::override_field(&mut settings.max_connection_rate, "42")?;
+        assert_eq!(settings.max_connection_rate, MaxConnectionRate::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__max_connection_rate() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.max_connection_rate, MaxConnectionRate::Default);
+        std::env::set_var("OVERRIDE__MAX_CONNECTION_RATE", "42");
+        Settings::override_field_with_env_var(
+            &mut settings.max_connection_rate, "OVERRIDE__MAX_CONNECTION_RATE"
+        )?;
+        assert_eq!(settings.max_connection_rate, MaxConnectionRate::Manual(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__keep_alive() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.keep_alive, KeepAlive::Default);
+        Settings::override_field(&mut settings.keep_alive, "42 seconds")?;
+        assert_eq!(settings.keep_alive, KeepAlive::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__keep_alive() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.keep_alive, KeepAlive::Default);
+        std::env::set_var("OVERRIDE__KEEP_ALIVE", "42 seconds");
+        Settings::override_field_with_env_var(
+            &mut settings.keep_alive, "OVERRIDE__KEEP_ALIVE"
+        )?;
+        assert_eq!(settings.keep_alive, KeepAlive::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__client_timeout() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.client_timeout, Timeout::Default);
+        Settings::override_field(&mut settings.client_timeout, "42 seconds")?;
+        assert_eq!(settings.client_timeout, Timeout::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__client_timeout() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.client_timeout, Timeout::Default);
+        std::env::set_var("OVERRIDE__CLIENT_TIMEOUT", "42 seconds");
+        Settings::override_field_with_env_var(
+            &mut settings.client_timeout, "OVERRIDE__CLIENT_TIMEOUT"
+        )?;
+        assert_eq!(settings.client_timeout, Timeout::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__client_shutdown() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.client_shutdown, Timeout::Default);
+        Settings::override_field(&mut settings.client_shutdown, "42 seconds")?;
+        assert_eq!(settings.client_shutdown, Timeout::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__client_shutdown() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.client_shutdown, Timeout::Default);
+        std::env::set_var("OVERRIDE__CLIENT_SHUTDOWN", "42 seconds");
+        Settings::override_field_with_env_var(
+            &mut settings.client_shutdown, "OVERRIDE__CLIENT_SHUTDOWN"
+        )?;
+        assert_eq!(settings.client_shutdown, Timeout::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__shutdown_timeout() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.shutdown_timeout, Timeout::Default);
+        Settings::override_field(&mut settings.shutdown_timeout, "42 seconds")?;
+        assert_eq!(settings.shutdown_timeout, Timeout::Seconds(42));
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__shutdown_timeout() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.shutdown_timeout, Timeout::Default);
+        std::env::set_var("OVERRIDE__SHUTDOWN_TIMEOUT", "42 seconds");
+        Settings::override_field_with_env_var(
+            &mut settings.shutdown_timeout, "OVERRIDE__SHUTDOWN_TIMEOUT"
+        )?;
+        assert_eq!(settings.shutdown_timeout, Timeout::Seconds(42));
+        Ok(())
+    }
+
+
+
+    #[test]
+    fn override_field__ssl__enabled() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
         assert!(!settings.ssl.enabled);
         Settings::override_field(&mut settings.ssl.enabled, "true")?;
@@ -301,15 +532,74 @@ mod tests {
     }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn override_field_with_env_var__ssl_enabled() -> Result<()> {
+    fn override_field_with_env_var__ssl__enabled() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
         assert!(!settings.ssl.enabled);
-        std::env::set_var("APPLY_TOML_AND_ENV_VARS__SSL_ENABLED", "true");
+        std::env::set_var("OVERRIDE__SSL_ENABLED", "true");
         Settings::override_field_with_env_var(
-            &mut settings.ssl.enabled, "APPLY_TOML_AND_ENV_VARS__SSL_ENABLED"
+            &mut settings.ssl.enabled, "OVERRIDE__SSL_ENABLED"
         )?;
         assert!(settings.ssl.enabled);
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__ssl__certificate() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.ssl.certificate, Path::new("path/to/cert/cert.pem"));
+        Settings::override_field(
+            &mut settings.ssl.certificate, "/overridden/path/to/cert/cert.pem"
+        )?;
+        assert_eq!(
+            settings.ssl.certificate, Path::new("/overridden/path/to/cert/cert.pem")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__ssl__certificate() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.ssl.certificate, Path::new("path/to/cert/cert.pem"));
+        std::env::set_var(
+            "OVERRIDE__SSL_CERTIFICATE", "/overridden/path/to/cert/cert.pem"
+        );
+        Settings::override_field_with_env_var(
+            &mut settings.ssl.certificate, "OVERRIDE__SSL_CERTIFICATE"
+        )?;
+        assert_eq!(
+            settings.ssl.certificate,
+            Path::new("/overridden/path/to/cert/cert.pem")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn override_field__ssl__private_key() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.ssl.private_key, Path::new("path/to/cert/key.pem"));
+        Settings::override_field(
+            &mut settings.ssl.private_key, "/overridden/path/to/cert/key.pem"
+        )?;
+        assert_eq!(
+            settings.ssl.private_key, Path::new("/overridden/path/to/cert/key.pem")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn override_field_with_env_var__ssl__private_key() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.ssl.private_key, Path::new("path/to/cert/key.pem"));
+        std::env::set_var(
+            "OVERRIDE__SSL_PRIVATE_KEY", "/overridden/path/to/cert/key.pem"
+        );
+        Settings::override_field_with_env_var(
+            &mut settings.ssl.private_key, "OVERRIDE__SSL_PRIVATE_KEY"
+        )?;
+        assert_eq!(
+            settings.ssl.private_key,
+            Path::new("/overridden/path/to/cert/key.pem")
+        );
         Ok(())
     }
 
