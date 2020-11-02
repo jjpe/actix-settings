@@ -10,6 +10,7 @@ use actix_web::dev::{AppConfig, MessageBody, Service};
 pub use crate::error::{AtError, AtResult};
 pub use crate::core::*;
 use serde_derive::Deserialize;
+use std::collections::HashMap;
 use std::env::{self, VarError};
 use std::io::{Read, Write};
 use std::fmt::Debug;
@@ -17,7 +18,8 @@ use std::fs::File;
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct Settings {
+#[serde(bound = "X: serde::de::Deserialize<'de>")]
+pub struct BasicSettings<X> {
     pub hosts: Vec<Address>,
     pub mode: Mode,
     #[serde(rename = "enable-compression")]
@@ -40,10 +42,19 @@ pub struct Settings {
     #[serde(rename = "shutdown-timeout")]
     pub shutdown_timeout: Timeout,
     pub ssl: Ssl,
+    #[serde(rename = "extended-fields")]
+    pub extended_fields: X,
 }
 
-impl Settings {
-    const DEFAULT_TOML_FILE_TEMPLATE: &'static str = r#"
+pub type Settings = BasicSettings::<HashMap<String, String>>;
+
+impl<X> BasicSettings<X>
+where X: for<'de> serde::de::Deserialize<'de> {
+
+    /// NOTE **DO NOT** mess with the ordering of the tables in this template.
+    ///      Especially the `[extended-fields]` table needs to be last in order
+    ///      for some tests to keep working.
+    pub(crate) const DEFAULT_TOML_TEMPLATE: &'static str = r#"
 # For more info, see: https://docs.rs/actix-web/3.1.0/actix_web/struct.HttpServer.html.
 
 hosts = [
@@ -111,11 +122,15 @@ shutdown-timeout = "default"
 enabled = false
 certificate = "path/to/cert/cert.pem"
 private-key = "path/to/cert/key.pem"
+
+# The `extended-fields` table be used to express application-specific settings.
+# See the `README.md` file for more details on how to use this.
+[extended-fields]
 "#;
 
     /// Parse an instance of `Self` from a `TOML` file located at `filepath`.
-    /// If the `TOML` file doesn't exist, it is generated from a template,
-    /// after which the newly generated file is read in and parsed.
+    /// If the file doesn't exist, it is generated from the default `TOML`
+    /// template, after which the newly generated file is read in and parsed.
     pub fn parse_toml<P>(filepath: P) -> AtResult<Self>
     where P: AsRef<Path> {
         let filepath = filepath.as_ref();
@@ -125,13 +140,24 @@ private-key = "path/to/cert/key.pem"
         f.read_to_string(&mut contents)?;
         Ok(toml::from_str::<Self>(&contents)?)
     }
+
+    /// Parse an instance of `Self` straight from the default `TOML` template.
+    pub fn from_default_template() -> AtResult<Self> {
+        Self::from_template(Self::DEFAULT_TOML_TEMPLATE)
+    }
+
+    /// Parse an instance of `Self` straight from the default `TOML` template.
+    pub fn from_template(template: &str) -> AtResult<Self> {
+        Ok(toml::from_str::<Self>(template)?)
+    }
+
     /// Write the TOML config file template to a new file, to be
     /// located at `filepath`.  Return a `Error::FileExists(_)`
     /// error if a file already exists at that location.
     pub fn write_toml_file<P>(filepath: P) -> AtResult<()>
     where P: AsRef<Path> {
         let filepath = filepath.as_ref();
-        let contents = Self::DEFAULT_TOML_FILE_TEMPLATE.trim();
+        let contents = Self::DEFAULT_TOML_TEMPLATE.trim();
         if filepath.exists() {
             return Err(AtError::FileExists(filepath.to_path_buf()));
         }
@@ -167,7 +193,11 @@ private-key = "path/to/cert/key.pem"
 
 pub trait ApplySettings {
     #[must_use]
-    fn apply_settings(self, settings: &Settings) -> Self;
+    /// Apply a [`BasicSettings`] value to `self`.
+    ///
+    /// [`BasicSettings`]: ./struct.BasicSettings.html
+    fn apply_settings<X>(self, settings: &BasicSettings<X>) -> Self
+    where X: for<'de> serde::de::Deserialize<'de>;
 }
 
 impl<F, I, S, B> ApplySettings for HttpServer<F, I, S, B>
@@ -181,7 +211,8 @@ where
     <S::Service as Service>::Future: 'static,
     B: MessageBody + 'static
 {
-    fn apply_settings(mut self, settings: &Settings) -> Self {
+    fn apply_settings<X>(mut self, settings: &BasicSettings<X>) -> Self
+    where X: for<'de> serde::de::Deserialize<'de> {
         if settings.ssl.enabled {
             // for Address { host, port } in &settings.hosts {
             //     self = self.bind(format!("{}:{}", host, port))
@@ -242,7 +273,7 @@ mod tests {
     #![allow(non_snake_case)]
 
     use actix_web::{App, HttpServer};
-    use crate::{ApplySettings, AtResult, ExtensibleSettings, Settings};
+    use crate::{ApplySettings, AtResult, BasicSettings, Settings};
     use crate::core::*; // used for value construction in assertions
     use serde::Deserialize;
     use std::path::Path;
@@ -600,6 +631,48 @@ mod tests {
             settings.ssl.private_key,
             Path::new("/overridden/path/to/cert/key.pem")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn override_extended_field_with_custom_type() -> AtResult<()> {
+        #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+        struct NestedField {
+            foo: String,
+            bar: bool,
+        }
+        #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+        struct CustomFields {
+            #[serde(rename = "example-name")]
+            example_name: String,
+            #[serde(rename = "nested-field")]
+            nested_field: NestedField,
+        }
+        type CustomSettings = BasicSettings<CustomFields>;
+        let mut settings = CustomSettings::from_template(&(
+            CustomSettings::DEFAULT_TOML_TEMPLATE.to_string() + "\n"
+                // NOTE: Add these entries to the `[extended-fields]` table:
+                + "example-name = \"example value\"\n"
+                + "nested-field = { foo = \"foo\", bar = false }"
+        ))?;
+        assert_eq!(settings.extended_fields, CustomFields {
+            example_name: "example value".into(),
+            nested_field: NestedField {
+                foo: "foo".into(),
+                bar: false,
+            },
+        });
+        CustomSettings::override_field(
+            &mut settings.extended_fields.example_name,
+            "/overridden/path/to/cert/key.pem".to_string()
+        )?;
+        assert_eq!(settings.extended_fields, CustomFields {
+            example_name: "/overridden/path/to/cert/key.pem".into(),
+            nested_field: NestedField {
+                foo: "foo".into(),
+                bar: false,
+            },
+        });
         Ok(())
     }
 
