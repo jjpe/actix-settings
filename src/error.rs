@@ -8,7 +8,7 @@ use toml::de::Error as TomlError;
 
 macro_rules! InvalidValue {
     (expected: $expected:expr, got: $got:expr,) => {
-        crate::Error::InvalidValue {
+        crate::AtError::InvalidValue {
             expected: $expected,
             got: $got.to_string(),
             file: file!(),
@@ -18,10 +18,10 @@ macro_rules! InvalidValue {
     };
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type AtResult<T> = std::result::Result<T, AtError>;
 
 #[derive(Clone, Debug)]
-pub enum Error {
+pub enum AtError {
     EnvVarError(VarError),
     FileExists(PathBuf),
     InvalidValue {
@@ -38,26 +38,26 @@ pub enum Error {
     TomlError(TomlError),
 }
 
-impl From<IoError> for Error {
+impl From<IoError> for AtError {
     fn from(err: IoError) -> Self { Self::IoError(ioe::IoError::from(err)) }
 }
 
-impl From<ioe::IoError> for Error {
+impl From<ioe::IoError> for AtError {
     fn from(err: ioe::IoError) -> Self { Self::IoError(err) }
 }
 
-impl From<ParseBoolError> for Error {
+impl From<ParseBoolError> for AtError {
     fn from(err: ParseBoolError) -> Self { Self::ParseBoolError(err) }
 }
 
-impl From<ParseIntError> for Error {
+impl From<ParseIntError> for AtError {
     fn from(err: ParseIntError) -> Self { Self::ParseIntError(err) }
 }
 
-impl From<TomlError> for Error {
+impl From<TomlError> for AtError {
     fn from(err: TomlError) -> Self { Self::TomlError(err) }
 }
 
-impl From<VarError> for Error {
+impl From<VarError> for AtError {
     fn from(err: VarError) -> Self { Self::EnvVarError(err) }
 }

@@ -1,6 +1,6 @@
 /// Core types and impls
 
-use crate::error::Error;
+use crate::error::AtError;
 use regex::Regex;
 use serde::de;
 use serde_derive::Deserialize;
@@ -9,16 +9,12 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub trait Parse: Sized {
-    type Error;
-
-    fn parse(string: &str) -> Result<Self, Error>;
+    fn parse(string: &str) -> Result<Self, AtError>;
 }
 
 impl Parse for bool {
-    type Error = Error;
-
-    fn parse(string: &str) -> Result<Self, Error> {
-        Self::from_str(string).map_err(Error::from)
+    fn parse(string: &str) -> Result<Self, AtError> {
+        Self::from_str(string).map_err(AtError::from)
     }
 }
 
@@ -26,9 +22,8 @@ macro_rules! impl_parse_for_int_type {
     ($($int_type:ty),+ $(,)?) => {
         $(
             impl Parse for $int_type {
-                type Error = Error;
-                fn parse(string: &str) -> Result<Self, Error> {
-                    Self::from_str(string).map_err(Error::from)
+                fn parse(string: &str) -> Result<Self, AtError> {
+                    Self::from_str(string).map_err(AtError::from)
                 }
             }
         )+
@@ -36,10 +31,12 @@ macro_rules! impl_parse_for_int_type {
 }
 impl_parse_for_int_type![i8, i16, i32, i64, i128,    u8, u16, u32, u64, u128];
 
-impl Parse for PathBuf {
-    type Error = Error;
+impl Parse for String {
+    fn parse(string: &str) -> Result<Self, AtError> { Ok(string.to_string()) }
+}
 
-    fn parse(string: &str) -> Result<Self, Error> {
+impl Parse for PathBuf {
+    fn parse(string: &str) -> Result<Self, AtError> {
         Ok(PathBuf::from(string))
     }
 }
@@ -77,14 +74,12 @@ lazy_static::lazy_static! {
 }
 
 impl Parse for Address {
-    type Error = Error;
-
-    fn parse(string: &str) -> Result<Self, Error> {
+    fn parse(string: &str) -> Result<Self, AtError> {
         let mut items = string.trim()
             .trim_start_matches("[")
             .trim_end_matches("]")
             .split(",");
-        let parse_error = || Error::ParseAddressError(string.to_string());
+        let parse_error = || AtError::ParseAddressError(string.to_string());
         if !ADDR_REGEX.is_match(string) { return Err(parse_error()); }
         Ok(Self {
             host: items.next().ok_or(parse_error())?.trim().to_string(),
@@ -94,10 +89,8 @@ impl Parse for Address {
 }
 
 impl Parse for Vec<Address> {
-    type Error = Error;
-
-    fn parse(string: &str) -> Result<Self, Error> {
-        let parse_error = || Error::ParseAddressError(string.to_string());
+    fn parse(string: &str) -> Result<Self, AtError> {
+        let parse_error = || AtError::ParseAddressError(string.to_string());
         if !ADDR_LIST_REGEX.is_match(string) { return Err(parse_error()); }
         let mut addrs = vec![];
         for list_caps in ADDR_LIST_REGEX.captures_iter(string) {
@@ -123,9 +116,7 @@ pub enum Mode {
 }
 
 impl Parse for Mode {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         match string {
             "development" => Ok(Self::Development),
             "production"  => Ok(Self::Production),
@@ -145,9 +136,7 @@ pub enum NumWorkers {
 }
 
 impl Parse for NumWorkers {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         match string {
             "default" => Ok(NumWorkers::Default),
             string => match string.parse::<usize>() {
@@ -178,7 +167,7 @@ impl<'de> serde::Deserialize<'de> for NumWorkers {
             where E: de::Error {
                 match NumWorkers::parse(value) {
                     Ok(num_workers) => Ok(num_workers),
-                    Err(Error::InvalidValue { expected, got, .. }) =>
+                    Err(AtError::InvalidValue { expected, got, .. }) =>
                         Err(de::Error::invalid_value(
                             de::Unexpected::Str(&got),
                             &expected
@@ -200,9 +189,7 @@ pub enum Backlog {
 }
 
 impl Parse for Backlog {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         match string {
             "default" => Ok(Backlog::Default),
             string => match string.parse::<usize>() {
@@ -233,7 +220,7 @@ impl<'de> serde::Deserialize<'de> for Backlog {
             where E: de::Error {
                 match Backlog::parse(value) {
                     Ok(backlog) => Ok(backlog),
-                    Err(Error::InvalidValue { expected, got, .. }) =>
+                    Err(AtError::InvalidValue { expected, got, .. }) =>
                         Err(de::Error::invalid_value(
                             de::Unexpected::Str(&got),
                             &expected
@@ -255,9 +242,7 @@ pub enum MaxConnections {
 }
 
 impl Parse for MaxConnections {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         match string {
             "default" => Ok(MaxConnections::Default),
             string => match string.parse::<usize>() {
@@ -288,7 +273,7 @@ impl<'de> serde::Deserialize<'de> for MaxConnections {
             where E: de::Error {
                 match MaxConnections::parse(value) {
                     Ok(max_connections) => Ok(max_connections),
-                    Err(Error::InvalidValue { expected, got, .. }) =>
+                    Err(AtError::InvalidValue { expected, got, .. }) =>
                         Err(de::Error::invalid_value(
                             de::Unexpected::Str(&got),
                             &expected
@@ -310,9 +295,7 @@ pub enum MaxConnectionRate {
 }
 
 impl Parse for MaxConnectionRate {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         match string {
             "default" => Ok(MaxConnectionRate::Default),
             string => match string.parse::<usize>() {
@@ -343,7 +326,7 @@ impl<'de> serde::Deserialize<'de> for MaxConnectionRate {
             where E: de::Error {
                 match MaxConnectionRate::parse(value) {
                     Ok(max_connection_rate) => Ok(max_connection_rate),
-                    Err(Error::InvalidValue { expected, got, .. }) =>
+                    Err(AtError::InvalidValue { expected, got, .. }) =>
                         Err(de::Error::invalid_value(
                             de::Unexpected::Str(&got),
                             &expected
@@ -367,9 +350,7 @@ pub enum KeepAlive {
 }
 
 impl Parse for KeepAlive {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         lazy_static::lazy_static! {
             pub static ref FMT: Regex = Regex::new(r"^\d+ seconds$")
                 .expect("Failed to compile regex: FMT");
@@ -418,7 +399,7 @@ impl<'de> serde::Deserialize<'de> for KeepAlive {
             where E: de::Error {
                 match KeepAlive::parse(value) {
                     Ok(keep_alive) => Ok(keep_alive),
-                    Err(Error::InvalidValue { expected, got, .. }) =>
+                    Err(AtError::InvalidValue { expected, got, .. }) =>
                         Err(de::Error::invalid_value(
                             de::Unexpected::Str(&got),
                             &expected
@@ -441,9 +422,7 @@ pub enum Timeout {
 }
 
 impl Parse for Timeout {
-    type Error = Error;
-
-    fn parse(string: &str) -> std::result::Result<Self, Self::Error> {
+    fn parse(string: &str) -> std::result::Result<Self, AtError> {
         lazy_static::lazy_static! {
             pub static ref FMT: Regex = Regex::new(r"^\d+ (milliseconds|seconds)$")
                 .expect("Failed to compile regex: FMT");
@@ -497,7 +476,7 @@ impl<'de> serde::Deserialize<'de> for Timeout {
             where E: de::Error {
                 match Timeout::parse(value) {
                     Ok(num_workers) => Ok(num_workers),
-                    Err(Error::InvalidValue { expected, got, .. }) =>
+                    Err(AtError::InvalidValue { expected, got, .. }) =>
                         Err(de::Error::invalid_value(
                             de::Unexpected::Str(&got),
                             &expected

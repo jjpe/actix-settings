@@ -7,7 +7,7 @@ use actix_http::{KeepAlive as ActixKeepAlive, Request, Response};
 use actix_service::{IntoServiceFactory, ServiceFactory};
 use actix_web::{Error as WebError, HttpServer};
 use actix_web::dev::{AppConfig, MessageBody, Service};
-use crate::error::{Error, Result};
+pub use crate::error::{AtError, AtResult};
 use crate::core::*;
 use serde_derive::Deserialize;
 use std::env::{self, VarError};
@@ -113,15 +113,27 @@ certificate = "path/to/cert/cert.pem"
 private-key = "path/to/cert/key.pem"
 "#;
 
+    /// Parse an instance of `Self` from a `TOML` file located at `filepath`.
+    /// If the `TOML` file doesn't exist, it is generated from a template,
+    /// after which the newly generated file is read in and parsed.
+    pub fn parse_toml<P>(filepath: P) -> AtResult<Self>
+    where P: AsRef<Path> {
+        let filepath = filepath.as_ref();
+        if !filepath.exists() { Self::write_toml_file(filepath)?; }
+        let mut f = File::open(filepath)?;
+        let mut contents = String::with_capacity(f.metadata()?.len() as usize);
+        f.read_to_string(&mut contents)?;
+        Ok(toml::from_str::<Self>(&contents)?)
+    }
     /// Write the TOML config file template to a new file, to be
     /// located at `filepath`.  Return a `Error::FileExists(_)`
     /// error if a file already exists at that location.
-    pub fn write_toml_file<P>(filepath: P) -> Result<()>
+    pub fn write_toml_file<P>(filepath: P) -> AtResult<()>
     where P: AsRef<Path> {
         let filepath = filepath.as_ref();
         let contents = Self::DEFAULT_TOML_FILE_TEMPLATE.trim();
         if filepath.exists() {
-            return Err(Error::FileExists(filepath.to_path_buf()));
+            return Err(AtError::FileExists(filepath.to_path_buf()));
         }
         let mut file = File::create(filepath)?;
         file.write_all(contents.as_bytes())?;
@@ -129,20 +141,7 @@ private-key = "path/to/cert/key.pem"
         Ok(())
     }
 
-    /// Parse an instance of `Self` from a `TOML` file located at `filepath`.
-    /// If the `TOML` file doesn't exist, it is generated from a template,
-    /// after which the newly generated file is read in and parsed.
-    pub fn parse_toml<P>(filepath: P) -> Result<Self>
-    where P: AsRef<Path> {
-        let filepath = filepath.as_ref();
-        if !filepath.exists() { Self::write_toml_file(filepath)?; }
-        let mut f = File::open(filepath)?;
-        let mut contents = String::with_capacity(f.metadata()?.len() as usize);
-        f.read_to_string(&mut contents)?;
-        Ok(toml::from_str::<Settings>(&contents)?)
-    }
-
-    pub fn override_field<F, V>(field: &mut F, value: V) -> Result<()>
+    pub fn override_field<F, V>(field: &mut F, value: V) -> AtResult<()>
     where F: Parse,
           V: AsRef<str>
     {
@@ -153,16 +152,15 @@ private-key = "path/to/cert/key.pem"
     pub fn override_field_with_env_var<F, N>(
         field: &mut F,
         var_name: N,
-    ) -> Result<()>
+    ) -> AtResult<()>
     where F: Parse,
           N: AsRef<str> {
         match env::var(var_name.as_ref()) {
             Err(VarError::NotPresent) => Ok((/*NOP*/)),
-            Err(var_error) => Err(Error::from(var_error)),
+            Err(var_error) => Err(AtError::from(var_error)),
             Ok(value) => Self::override_field(field, value),
         }
     }
-
 }
 
 
@@ -243,20 +241,22 @@ where
 mod tests {
     #![allow(non_snake_case)]
 
-    use actix_web::App;
-    use crate::core::Address;
-    use super::*;
+    use actix_web::{App, HttpServer};
+    use crate::{ApplySettings, AtResult, ExtensibleSettings, Settings};
+    use crate::core::*; // used for value construction in assertions
+    use serde::Deserialize;
+    use std::path::Path;
 
     #[test]
-    fn apply_settings() -> Result<()> {
+    fn apply_settings() -> AtResult<()> {
         let settings = Settings::parse_toml("Server.toml")?;
         let _ = HttpServer::new(|| { App::new() }).apply_settings(&settings);
         Ok(())
     }
 
     #[test]
-    fn override_field__hosts() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__hosts() -> AtResult<()> {
         assert_eq!(settings.hosts, vec![
             Address { host: "0.0.0.0".into(),   port: 9000 },
         ]);
@@ -270,8 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__hosts() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__hosts() -> AtResult<()> {
         assert_eq!(settings.hosts, vec![
             Address { host: "0.0.0.0".into(),   port: 9000 },
         ]);
@@ -290,8 +290,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__mode() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__mode() -> AtResult<()> {
         assert_eq!(settings.mode, Mode::Development);
         Settings::override_field(&mut settings.mode, "production")?;
         assert_eq!(settings.mode, Mode::Production);
@@ -299,8 +299,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__mode() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__mode() -> AtResult<()> {
         assert_eq!(settings.mode, Mode::Development);
         std::env::set_var("OVERRIDE__MODE", "production");
         Settings::override_field_with_env_var(
@@ -311,8 +311,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__enable_compression() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__enable_compression() -> AtResult<()> {
         assert!(settings.enable_compression);
         Settings::override_field(&mut settings.enable_compression, "false")?;
         assert!(!settings.enable_compression);
@@ -320,8 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__enable_compression() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__enable_compression() -> AtResult<()> {
         assert!(settings.enable_compression);
         std::env::set_var("OVERRIDE__ENABLE_COMPRESSION", "false");
         Settings::override_field_with_env_var(
@@ -332,8 +332,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__enable_log() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__enable_log() -> AtResult<()> {
         assert!(settings.enable_log);
         Settings::override_field(&mut settings.enable_log, "false")?;
         assert!(!settings.enable_log);
@@ -341,8 +341,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__enable_log() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__enable_log() -> AtResult<()> {
         assert!(settings.enable_log);
         std::env::set_var("OVERRIDE__ENABLE_LOG", "false");
         Settings::override_field_with_env_var(
@@ -353,8 +353,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__num_workers() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__num_workers() -> AtResult<()> {
         assert_eq!(settings.num_workers, NumWorkers::Default);
         Settings::override_field(&mut settings.num_workers, "42")?;
         assert_eq!(settings.num_workers, NumWorkers::Manual(42));
@@ -362,8 +362,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__num_workers() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__num_workers() -> AtResult<()> {
         assert_eq!(settings.num_workers, NumWorkers::Default);
         std::env::set_var("OVERRIDE__NUM_WORKERS", "42");
         Settings::override_field_with_env_var(
@@ -374,8 +374,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__backlog() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__backlog() -> AtResult<()> {
         assert_eq!(settings.backlog, Backlog::Default);
         Settings::override_field(&mut settings.backlog, "42")?;
         assert_eq!(settings.backlog, Backlog::Manual(42));
@@ -383,8 +383,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__backlog() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__backlog() -> AtResult<()> {
         assert_eq!(settings.backlog, Backlog::Default);
         std::env::set_var("OVERRIDE__BACKLOG", "42");
         Settings::override_field_with_env_var(
@@ -395,8 +395,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__max_connections() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__max_connections() -> AtResult<()> {
         assert_eq!(settings.max_connections, MaxConnections::Default);
         Settings::override_field(&mut settings.max_connections, "42")?;
         assert_eq!(settings.max_connections, MaxConnections::Manual(42));
@@ -404,8 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__max_connections() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__max_connections() -> AtResult<()> {
         assert_eq!(settings.max_connections, MaxConnections::Default);
         std::env::set_var("OVERRIDE__MAX_CONNECTIONS", "42");
         Settings::override_field_with_env_var(
@@ -416,8 +416,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__max_connection_rate() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__max_connection_rate() -> AtResult<()> {
         assert_eq!(settings.max_connection_rate, MaxConnectionRate::Default);
         Settings::override_field(&mut settings.max_connection_rate, "42")?;
         assert_eq!(settings.max_connection_rate, MaxConnectionRate::Manual(42));
@@ -425,8 +425,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__max_connection_rate() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__max_connection_rate() -> AtResult<()> {
         assert_eq!(settings.max_connection_rate, MaxConnectionRate::Default);
         std::env::set_var("OVERRIDE__MAX_CONNECTION_RATE", "42");
         Settings::override_field_with_env_var(
@@ -437,8 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__keep_alive() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__keep_alive() -> AtResult<()> {
         assert_eq!(settings.keep_alive, KeepAlive::Default);
         Settings::override_field(&mut settings.keep_alive, "42 seconds")?;
         assert_eq!(settings.keep_alive, KeepAlive::Seconds(42));
@@ -446,8 +446,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__keep_alive() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__keep_alive() -> AtResult<()> {
         assert_eq!(settings.keep_alive, KeepAlive::Default);
         std::env::set_var("OVERRIDE__KEEP_ALIVE", "42 seconds");
         Settings::override_field_with_env_var(
@@ -458,8 +458,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__client_timeout() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__client_timeout() -> AtResult<()> {
         assert_eq!(settings.client_timeout, Timeout::Default);
         Settings::override_field(&mut settings.client_timeout, "42 seconds")?;
         assert_eq!(settings.client_timeout, Timeout::Seconds(42));
@@ -467,8 +467,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__client_timeout() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__client_timeout() -> AtResult<()> {
         assert_eq!(settings.client_timeout, Timeout::Default);
         std::env::set_var("OVERRIDE__CLIENT_TIMEOUT", "42 seconds");
         Settings::override_field_with_env_var(
@@ -479,8 +479,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__client_shutdown() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__client_shutdown() -> AtResult<()> {
         assert_eq!(settings.client_shutdown, Timeout::Default);
         Settings::override_field(&mut settings.client_shutdown, "42 seconds")?;
         assert_eq!(settings.client_shutdown, Timeout::Seconds(42));
@@ -488,8 +488,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__client_shutdown() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__client_shutdown() -> AtResult<()> {
         assert_eq!(settings.client_shutdown, Timeout::Default);
         std::env::set_var("OVERRIDE__CLIENT_SHUTDOWN", "42 seconds");
         Settings::override_field_with_env_var(
@@ -500,8 +500,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__shutdown_timeout() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__shutdown_timeout() -> AtResult<()> {
         assert_eq!(settings.shutdown_timeout, Timeout::Default);
         Settings::override_field(&mut settings.shutdown_timeout, "42 seconds")?;
         assert_eq!(settings.shutdown_timeout, Timeout::Seconds(42));
@@ -509,8 +509,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__shutdown_timeout() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__shutdown_timeout() -> AtResult<()> {
         assert_eq!(settings.shutdown_timeout, Timeout::Default);
         std::env::set_var("OVERRIDE__SHUTDOWN_TIMEOUT", "42 seconds");
         Settings::override_field_with_env_var(
@@ -523,8 +523,8 @@ mod tests {
 
 
     #[test]
-    fn override_field__ssl__enabled() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__ssl__enabled() -> AtResult<()> {
         assert!(!settings.ssl.enabled);
         Settings::override_field(&mut settings.ssl.enabled, "true")?;
         assert!(settings.ssl.enabled);
@@ -532,8 +532,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__ssl__enabled() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__ssl__enabled() -> AtResult<()> {
         assert!(!settings.ssl.enabled);
         std::env::set_var("OVERRIDE__SSL_ENABLED", "true");
         Settings::override_field_with_env_var(
@@ -544,8 +544,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__ssl__certificate() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__ssl__certificate() -> AtResult<()> {
         assert_eq!(settings.ssl.certificate, Path::new("path/to/cert/cert.pem"));
         Settings::override_field(
             &mut settings.ssl.certificate, "/overridden/path/to/cert/cert.pem"
@@ -557,8 +557,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__ssl__certificate() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__ssl__certificate() -> AtResult<()> {
         assert_eq!(settings.ssl.certificate, Path::new("path/to/cert/cert.pem"));
         std::env::set_var(
             "OVERRIDE__SSL_CERTIFICATE", "/overridden/path/to/cert/cert.pem"
@@ -574,8 +574,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field__ssl__private_key() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field__ssl__private_key() -> AtResult<()> {
         assert_eq!(settings.ssl.private_key, Path::new("path/to/cert/key.pem"));
         Settings::override_field(
             &mut settings.ssl.private_key, "/overridden/path/to/cert/key.pem"
@@ -587,8 +587,8 @@ mod tests {
     }
 
     #[test]
-    fn override_field_with_env_var__ssl__private_key() -> Result<()> {
         let mut settings = Settings::parse_toml("Server.toml")?;
+    fn override_field_with_env_var__ssl__private_key() -> AtResult<()> {
         assert_eq!(settings.ssl.private_key, Path::new("path/to/cert/key.pem"));
         std::env::set_var(
             "OVERRIDE__SSL_PRIVATE_KEY", "/overridden/path/to/cert/key.pem"
