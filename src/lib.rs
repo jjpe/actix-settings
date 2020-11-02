@@ -1,16 +1,23 @@
 /// A library to process Server.toml files
 
-mod error;
+#[macro_use] mod error;
+mod core;
 
-use crate::error::ServerResult;
-use regex::Regex;
+use actix_http::{KeepAlive as ActixKeepAlive, Request, Response};
+use actix_service::{IntoServiceFactory, ServiceFactory};
+use actix_web::{Error as WebError, HttpServer};
+use actix_web::dev::{AppConfig, MessageBody, Service};
+use crate::error::{Error, Result};
+use crate::core::*;
 use serde_derive::Deserialize;
-use std::io::Read;
-use std::fs::{File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::env::{self, VarError};
+use std::io::{Read, Write};
+use std::fmt::Debug;
+use std::fs::File;
+use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ServerToml {
+pub struct Settings {
     pub hosts: Vec<Address>,
     pub mode: Mode,
     #[serde(rename = "enable-compression")]
@@ -27,453 +34,290 @@ pub struct ServerToml {
     #[serde(rename = "keep-alive")]
     pub keep_alive: KeepAlive,
     #[serde(rename = "client-timeout")]
-    pub client_timeout: ClientTimeout,
+    pub client_timeout: Timeout,
     #[serde(rename = "client-shutdown")]
-    pub client_shutdown: ClientShutdown,
+    pub client_shutdown: Timeout,
     #[serde(rename = "shutdown-timeout")]
-    pub shutdown_timeout: ShutdownTimeout,
+    pub shutdown_timeout: Timeout,
     pub ssl: Ssl,
 }
 
-impl ServerToml {
-    pub fn parse<P: AsRef<Path>>(filename: P) -> ServerResult<Self> {
-        const KILOBYTE: usize = 1024;
-        const CAPACITY: usize = 10 * KILOBYTE;
-        let mut file: File = OpenOptions::new()
-            .read(true)
-            .write(false)
-            .open(filename)?;
-        let mut contents = String::with_capacity(CAPACITY);
-        file.read_to_string(&mut contents)?;
-        Ok(toml::from_str::<ServerToml>(&contents)?)
+impl Settings {
+    const DEFAULT_TOML_FILE_TEMPLATE: &'static str = r#"
+# For more info, see: https://docs.rs/actix-web/3.1.0/actix_web/struct.HttpServer.html.
+
+hosts = [
+    ["0.0.0.0", 9000]      # This should work for both development and deployment...
+    #                      # ... but other entries are possible, as well.
+]
+mode = "development"       # Either "development" or "production".
+enable-compression = true  # Toggle compression middleware.
+enable-log = true          # Toggle logging middleware.
+
+# The number of workers that the server should start.
+# By default the number of available logical cpu cores is used.
+# Takes a string value: Either "default", or an integer N > 0 e.g. "6".
+num-workers = "default"
+
+# The maximum number of pending connections.  This refers to the number of clients
+# that can be waiting to be served.  Exceeding this number results in the client
+# getting an error when attempting to connect.  It should only affect servers under
+# significant load.  Generally set in the 64-2048 range.  The default value is 2048.
+# Takes a string value: Either "default", or an integer N > 0 e.g. "6".
+backlog = "default"
+
+# Sets the maximum per-worker number of concurrent connections.  All socket listeners
+# will stop accepting connections when this limit is reached for each worker.
+# By default max connections is set to a 25k.
+# Takes a string value: Either "default", or an integer N > 0 e.g. "6".
+max-connections = "default"
+
+# Sets the maximum per-worker concurrent connection establish process.  All listeners
+# will stop accepting connections when this limit is reached. It can be used to limit
+# the global TLS CPU usage.  By default max connections is set to a 256.
+# Takes a string value: Either "default", or an integer N > 0 e.g. "6".
+max-connection-rate = "default"
+
+# Set server keep-alive setting.  By default keep alive is set to 5 seconds.
+# Takes a string value: Either "default", "disabled", "os",
+# or a string of the format "N seconds" where N is an integer > 0 e.g. "6 seconds".
+keep-alive = "default"
+
+# Set server client timeout in milliseconds for first request.  Defines a timeout
+# for reading client request header. If a client does not transmit the entire set of
+# headers within this time, the request is terminated with the 408 (Request Time-out)
+# error.  To disable timeout, set the value to 0.
+# By default client timeout is set to 5000 milliseconds.
+# Takes a string value: Either "default", or a string of the format "N milliseconds"
+# where N is an integer > 0 e.g. "6 milliseconds".
+client-timeout = "default"
+
+# Set server connection shutdown timeout in milliseconds.  Defines a timeout for
+# shutdown connection. If a shutdown procedure does not complete within this time,
+# the request is dropped.  To disable timeout set value to 0.
+# By default client timeout is set to 5000 milliseconds.
+# Takes a string value: Either "default", or a string of the format "N milliseconds"
+# where N is an integer > 0 e.g. "6 milliseconds".
+client-shutdown = "default"
+
+# Timeout for graceful workers shutdown. After receiving a stop signal, workers have
+# this much time to finish serving requests. Workers still alive after the timeout
+# are force dropped.  By default shutdown timeout sets to 30 seconds.
+# Takes a string value: Either "default", or a string of the format "N seconds"
+# where N is an integer > 0 e.g. "6 seconds".
+shutdown-timeout = "default"
+
+[ssl] # SSL is disabled by default because the certs don't exist
+enabled = false
+certificate = "path/to/cert/cert.pem"
+private-key = "path/to/cert/key.pem"
+"#;
+
+    /// Write the TOML config file template to a new file, to be
+    /// located at `filepath`.  Return a `Error::FileExists(_)`
+    /// error if a file already exists at that location.
+    pub fn write_toml_file<P>(filepath: P) -> Result<()>
+    where P: AsRef<Path> {
+        let filepath = filepath.as_ref();
+        let contents = Self::DEFAULT_TOML_FILE_TEMPLATE.trim();
+        if filepath.exists() {
+            return Err(Error::FileExists(filepath.to_path_buf()));
+        }
+        let mut file = File::create(filepath)?;
+        file.write_all(contents.as_bytes())?;
+        file.flush()?;
+        Ok(())
     }
+
+    /// Parse an instance of `Self` from a `TOML` file located at `filepath`.
+    /// If the `TOML` file doesn't exist, it is generated from a template,
+    /// after which the newly generated file is read in and parsed.
+    pub fn parse_toml<P>(filepath: P) -> Result<Self>
+    where P: AsRef<Path> {
+        let filepath = filepath.as_ref();
+        if !filepath.exists() { Self::write_toml_file(filepath)?; }
+        let mut f = File::open(filepath)?;
+        let mut contents = String::with_capacity(f.metadata()?.len() as usize);
+        f.read_to_string(&mut contents)?;
+        Ok(toml::from_str::<Settings>(&contents)?)
+    }
+
+    pub fn override_field<F, V>(field: &mut F, value: V) -> Result<()>
+    where F: Parse,
+          V: AsRef<str>
+    {
+        *field = F::parse(value.as_ref())?;
+        Ok(())
+    }
+
+    pub fn override_field_with_env_var<F, N>(
+        field: &mut F,
+        var_name: N,
+    ) -> Result<()>
+    where F: Parse,
+          N: AsRef<str> {
+        match env::var(var_name.as_ref()) {
+            Err(VarError::NotPresent) => Ok((/*NOP*/)),
+            Err(var_error) => Err(Error::from(var_error)),
+            Ok(value) => Self::override_field(field, value),
+        }
+    }
+
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Address {
-    pub host: String,
-    pub port: u16,
+
+
+pub trait ApplySettings {
+    #[must_use]
+    fn apply_settings(self, settings: &Settings) -> Self;
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub enum Mode {
-    #[serde(rename = "development")]
-    Development,
-    #[serde(rename = "production")]
-    Production
-}
-
-#[derive(Debug, Clone)]
-pub enum NumWorkers {
-    Default,
-    Manual(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for NumWorkers {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct NumWorkersVisitor;
-
-        impl<'de> de::Visitor<'de> for NumWorkersVisitor {
-            type Value = NumWorkers;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\" or a string containing an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                match value {
-                    "default" => Ok(NumWorkers::Default),
-                    string => match string.parse::<usize>() {
-                        Ok(val) => Ok(NumWorkers::Manual(val)),
-                        Err(_) => Err(de::Error::invalid_value(
-                            de::Unexpected::Str(string),
-                            &"a positive integer"
-                        ))
-                    },
-                }
+impl<F, I, S, B> ApplySettings for HttpServer<F, I, S, B>
+where
+    F: Fn() -> I + Send + Clone + 'static,
+    I: IntoServiceFactory<S>,
+    S: ServiceFactory<Config = AppConfig, Request = Request>,
+    S::Error: Into<WebError> + 'static,
+    S::InitError: Debug,
+    S::Response: Into<Response<B>> + 'static,
+    <S::Service as Service>::Future: 'static,
+    B: MessageBody + 'static
+{
+    fn apply_settings(mut self, settings: &Settings) -> Self {
+        if settings.ssl.enabled {
+            // for Address { host, port } in &settings.hosts {
+            //     self = self.bind(format!("{}:{}", host, port))
+            //         .unwrap(/*TODO*/);
+            // }
+            todo!("[ApplySettings] SSL support has not been implemented yet.");
+        } else {
+            for Address { host, port } in &settings.hosts {
+                self = self.bind(format!("{}:{}", host, port))
+                    .unwrap(/*TODO*/);
             }
         }
-
-        deserializer.deserialize_string(NumWorkersVisitor)
+        self = match settings.num_workers {
+            NumWorkers::Default   => self,
+            NumWorkers::Manual(n) => self.workers(n),
+        };
+        self = match settings.backlog {
+            Backlog::Default   => self,
+            Backlog::Manual(n) => self.backlog(n as i32),
+        };
+        self = match settings.max_connections {
+            MaxConnections::Default   => self,
+            MaxConnections::Manual(n) => self.max_connections(n),
+        };
+        self = match settings.max_connection_rate {
+            MaxConnectionRate::Default   => self,
+            MaxConnectionRate::Manual(n) => self.max_connection_rate(n),
+        };
+        self = match settings.keep_alive {
+            KeepAlive::Default    => self,
+            KeepAlive::Disabled   => self.keep_alive(ActixKeepAlive::Disabled),
+            KeepAlive::Os         => self.keep_alive(ActixKeepAlive::Os),
+            KeepAlive::Seconds(n) => self.keep_alive(n),
+        };
+        self = match settings.client_timeout {
+            Timeout::Default         => self,
+            Timeout::Milliseconds(n) => self.client_timeout(n as u64),
+            Timeout::Seconds(n)      => self.client_timeout(n as u64 * 1000),
+        };
+        self = match settings.client_shutdown {
+            Timeout::Default         => self,
+            Timeout::Milliseconds(n) => self.client_shutdown(n as u64),
+            Timeout::Seconds(n)      => self.client_shutdown(n as u64 * 1000),
+        };
+        self = match settings.shutdown_timeout {
+            Timeout::Default         => self,
+            Timeout::Milliseconds(_) => self.shutdown_timeout(1),
+            Timeout::Seconds(n)      => self.shutdown_timeout(n as u64),
+        };
+        self
     }
 }
 
-
-#[derive(Debug, Clone)]
-pub enum Backlog {
-    Default,
-    Manual(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for Backlog {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct BacklogVisitor;
-
-        impl<'de> de::Visitor<'de> for BacklogVisitor {
-            type Value = Backlog;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\" or a string containing an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                match value {
-                    "default" => Ok(Backlog::Default),
-                    string => match string.parse::<usize>() {
-                        Ok(val) => Ok(Backlog::Manual(val)),
-                        Err(_) => Err(de::Error::invalid_value(
-                            de::Unexpected::Str(string),
-                            &"an integer > 0"
-                        ))
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(BacklogVisitor)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum MaxConnections {
-    Default,
-    Manual(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for MaxConnections {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct MaxConnectionsVisitor;
-
-        impl<'de> de::Visitor<'de> for MaxConnectionsVisitor {
-            type Value = MaxConnections;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\" or a string containing an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                match value {
-                    "default" => Ok(MaxConnections::Default),
-                    string => match string.parse::<usize>() {
-                        Ok(val) => Ok(MaxConnections::Manual(val)),
-                        Err(_) => Err(de::Error::invalid_value(
-                            de::Unexpected::Str(string),
-                            &"an integer > 0"
-                        ))
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(MaxConnectionsVisitor)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum MaxConnectionRate {
-    Default,
-    Manual(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for MaxConnectionRate {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct MaxConnectionRateVisitor;
-
-        impl<'de> de::Visitor<'de> for MaxConnectionRateVisitor {
-            type Value = MaxConnectionRate;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\" or a string containing an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                match value {
-                    "default" => Ok(MaxConnectionRate::Default),
-                    string => match string.parse::<usize>() {
-                        Ok(val) => Ok(MaxConnectionRate::Manual(val)),
-                        Err(_) => Err(de::Error::invalid_value(
-                            de::Unexpected::Str(string),
-                            &"an integer > 0"
-                        ))
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(MaxConnectionRateVisitor)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum KeepAlive {
-    Default,
-    Disabled,
-    Os,
-    Seconds(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for KeepAlive {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct KeepAliveVisitor;
-
-        impl<'de> de::Visitor<'de> for KeepAliveVisitor {
-            type Value = KeepAlive;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\", \"disabled\", \"os\", or a string of the format \"N seconds\" where N is an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                lazy_static::lazy_static! {
-                    pub static ref FMT: Regex = Regex::new(
-                        r"^\d+ seconds$"
-                    ).expect("Failed to compile regex: FMT");
-                    pub static ref DIGITS: Regex = Regex::new(
-                        r"^\d+"
-                    ).expect("Failed to compile regex: FMT");
-                }
-                let invalid_value = |string| Err(de::Error::invalid_value(
-                    de::Unexpected::Str(string),
-                    &"a string of the format \"N seconds\" where N is an integer > 0"
-                ));
-                let digits_in = |m: regex::Match| &string[m.start() .. m.end()];
-                match string {
-                    "default"   => Ok(KeepAlive::Default),
-                    "disabled"  => Ok(KeepAlive::Disabled),
-                    "OS" | "os" => Ok(KeepAlive::Os),
-                    string if !FMT.is_match(&string) => invalid_value(string),
-                    string => match DIGITS.find(&string) {
-                        None => invalid_value(string),
-                        Some(mat) => match digits_in(mat).parse() {
-                            Ok(val) => Ok(KeepAlive::Seconds(val)),
-                            Err(_) => invalid_value(string),
-                        },
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(KeepAliveVisitor)
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub enum ClientTimeout {
-    Default,
-    Milliseconds(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for ClientTimeout {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct ClientTimeoutVisitor;
-
-        impl<'de> de::Visitor<'de> for ClientTimeoutVisitor {
-            type Value = ClientTimeout;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\", \"disabled\", \"os\", or a string of the format \"N seconds\" where N is an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                lazy_static::lazy_static! {
-                    pub static ref FMT: Regex = Regex::new(
-                        r"^\d+ milliseconds$"
-                    ).expect("Failed to compile regex: FMT");
-                    pub static ref DIGITS: Regex = Regex::new(
-                        r"^\d+"
-                    ).expect("Failed to compile regex: FMT");
-                }
-                let invalid_value = |string| Err(de::Error::invalid_value(
-                    de::Unexpected::Str(string),
-                    &"a string of the format \"N seconds\" where N is an integer > 0"
-                ));
-                let digits_in = |m: regex::Match| &string[m.start() .. m.end()];
-                match string {
-                    "default"   => Ok(ClientTimeout::Default),
-                    string if !FMT.is_match(&string) => invalid_value(string),
-                    string => match DIGITS.find(&string) {
-                        None => invalid_value(string),
-                        Some(mat) => match digits_in(mat).parse() {
-                            Ok(val) => Ok(ClientTimeout::Milliseconds(val)),
-                            Err(_) => invalid_value(string),
-                        },
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(ClientTimeoutVisitor)
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub enum ClientShutdown {
-    Default,
-    Milliseconds(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for ClientShutdown {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct ClientShutdownVisitor;
-
-        impl<'de> de::Visitor<'de> for ClientShutdownVisitor {
-            type Value = ClientShutdown;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\", \"disabled\", \"os\", or a string of the format \"N seconds\" where N is an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                lazy_static::lazy_static! {
-                    pub static ref FMT: Regex = Regex::new(
-                        r"^\d+ milliseconds$"
-                    ).expect("Failed to compile regex: FMT");
-                    pub static ref DIGITS: Regex = Regex::new(
-                        r"^\d+"
-                    ).expect("Failed to compile regex: FMT");
-                }
-                let invalid_value = |string| Err(de::Error::invalid_value(
-                    de::Unexpected::Str(string),
-                    &"a string of the format \"N seconds\" where N is an integer > 0"
-                ));
-                let digits_in = |m: regex::Match| &string[m.start() .. m.end()];
-                match string {
-                    "default"   => Ok(ClientShutdown::Default),
-                    string if !FMT.is_match(&string) => invalid_value(string),
-                    string => match DIGITS.find(&string) {
-                        None => invalid_value(string),
-                        Some(mat) => match digits_in(mat).parse() {
-                            Ok(val) => Ok(ClientShutdown::Milliseconds(val)),
-                            Err(_) => invalid_value(string),
-                        },
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(ClientShutdownVisitor)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ShutdownTimeout {
-    Default,
-    Seconds(usize),
-}
-
-impl<'de> serde::Deserialize<'de> for ShutdownTimeout {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> {
-        use serde::de;
-        use std::fmt;
-
-        struct ShutdownTimeoutVisitor;
-
-        impl<'de> de::Visitor<'de> for ShutdownTimeoutVisitor {
-            type Value = ShutdownTimeout;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                let msg = "Either \"default\", \"disabled\", \"os\", or a string of the format \"N seconds\" where N is an integer > 0";
-                formatter.write_str(msg)
-            }
-
-            fn visit_str<E>(self, string: &str) -> Result<Self::Value, E>
-            where E: de::Error {
-                lazy_static::lazy_static! {
-                    pub static ref FMT: Regex = Regex::new(
-                        r"^\d+ seconds$"
-                    ).expect("Failed to compile regex: FMT");
-                    pub static ref DIGITS: Regex = Regex::new(
-                        r"^\d+"
-                    ).expect("Failed to compile regex: FMT");
-                }
-                let invalid_value = |string| Err(de::Error::invalid_value(
-                    de::Unexpected::Str(string),
-                    &"a string of the format \"N seconds\" where N is an integer > 0"
-                ));
-                let digits_in = |m: regex::Match| &string[m.start() .. m.end()];
-                match string {
-                    "default"   => Ok(ShutdownTimeout::Default),
-                    string if !FMT.is_match(&string) => invalid_value(string),
-                    string => match DIGITS.find(&string) {
-                        None => invalid_value(string),
-                        Some(mat) => match digits_in(mat).parse() {
-                            Ok(val) => Ok(ShutdownTimeout::Seconds(val)),
-                            Err(_) => invalid_value(string),
-                        },
-                    },
-                }
-            }
-        }
-
-        deserializer.deserialize_string(ShutdownTimeoutVisitor)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Ssl {
-    pub enabled: bool,
-    pub certificate: PathBuf,
-    #[serde(rename = "private-key")]
-    pub private_key: PathBuf,
-}
 
 
 #[cfg(test)]
 mod tests {
+    use actix_web::App;
+    use crate::core::Address;
     use super::*;
 
     #[test]
-    fn foo() -> ServerResult<()> {
-        let toml = ServerToml::parse("Server.toml.template")?;
-
-        println!("{:#?}", toml);
-
-        // Ok(())
-        todo!()
+    #[allow(non_snake_case)]
+    fn apply_settings() -> Result<()> {
+        let settings = Settings::parse_toml("Server.toml")?;
+        let _ = HttpServer::new(|| { App::new() }).apply_settings(&settings);
+        Ok(())
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn override_field__hosts() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.hosts, vec![
+            Address { host: "0.0.0.0".into(),   port: 9000 },
+        ]);
+        Settings::override_field(&mut settings.hosts, r#"[
+            ["0.0.0.0", 1234],
+        ]"#)?;
+        assert_eq!(settings.hosts, vec![
+            Address { host: "0.0.0.0".into(),   port: 1234 },
+        ]);
+        Ok(())
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn override_field_with_env_var__hosts() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert_eq!(settings.hosts, vec![
+            Address { host: "0.0.0.0".into(),   port: 9000 },
+        ]);
+        std::env::set_var("APPLY_TOML_AND_ENV_VARS__HOSTS", r#"[
+            ["0.0.0.0",   1234],
+            ["localhost", 2345]
+        ]"#);
+        Settings::override_field_with_env_var(
+            &mut settings.hosts, "APPLY_TOML_AND_ENV_VARS__HOSTS"
+        )?;
+        assert_eq!(settings.hosts, vec![
+            Address { host: "0.0.0.0".into(),   port: 1234 },
+            Address { host: "localhost".into(), port: 2345 },
+        ]);
+        Ok(())
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn override_field__ssl_enabled() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert!(!settings.ssl.enabled);
+        Settings::override_field(&mut settings.ssl.enabled, "true")?;
+        assert!(settings.ssl.enabled);
+        Settings::override_field(&mut settings.ssl.enabled, "false")?;
+        assert!(!settings.ssl.enabled);
+        Ok(())
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn override_field_with_env_var__ssl_enabled() -> Result<()> {
+        let mut settings = Settings::parse_toml("Server.toml")?;
+        assert!(!settings.ssl.enabled);
+        std::env::set_var("APPLY_TOML_AND_ENV_VARS__SSL_ENABLED", "true");
+        Settings::override_field_with_env_var(
+            &mut settings.ssl.enabled, "APPLY_TOML_AND_ENV_VARS__SSL_ENABLED"
+        )?;
+        assert!(settings.ssl.enabled);
+        std::env::set_var("APPLY_TOML_AND_ENV_VARS__SSL_ENABLED", "false");
+        Settings::override_field_with_env_var(
+            &mut settings.ssl.enabled, "APPLY_TOML_AND_ENV_VARS__SSL_ENABLED"
+        )?;
+        assert!(!settings.ssl.enabled);
+        Ok(())
+    }
+
 }
