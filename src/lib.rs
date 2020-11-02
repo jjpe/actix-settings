@@ -8,7 +8,7 @@ use actix_service::{IntoServiceFactory, ServiceFactory};
 use actix_web::{Error as WebError, HttpServer};
 use actix_web::dev::{AppConfig, MessageBody, Service};
 pub use crate::error::{AtError, AtResult};
-use crate::core::*;
+pub use crate::core::*;
 use serde_derive::Deserialize;
 use std::env::{self, VarError};
 use std::io::{Read, Write};
