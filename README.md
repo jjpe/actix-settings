@@ -8,9 +8,9 @@ Add this to your `Cargo.toml`:
 
 ``` toml
 [dependencies]
-actix-toml = "0.2.0"
-actix-web  = "3.1.0" # Should already be present
-env_logger = "0.8.1"
+actix-toml = "0.2"
+actix-web  = "3.1"
+env_logger = "0.8"
 ```
 
 ### Basic usage
@@ -67,7 +67,6 @@ fn init_logger(settings: &Settings) {
     std::env::set_var("RUST_BACKTRACE", "1");
     env_logger::init();
 }
-
 ```
 
 
