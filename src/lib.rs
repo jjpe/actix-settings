@@ -16,7 +16,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Settings {
     pub hosts: Vec<Address>,
     pub mode: Mode,

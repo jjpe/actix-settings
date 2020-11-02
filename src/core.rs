@@ -114,7 +114,7 @@ impl Parse for Vec<Address> {
 }
 
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub enum Mode {
     #[serde(rename = "development")]
     Development,
@@ -138,7 +138,7 @@ impl Parse for Mode {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumWorkers {
     Default,
     Manual(usize),
@@ -193,7 +193,7 @@ impl<'de> serde::Deserialize<'de> for NumWorkers {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Backlog {
     Default,
     Manual(usize),
@@ -248,7 +248,7 @@ impl<'de> serde::Deserialize<'de> for Backlog {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaxConnections {
     Default,
     Manual(usize),
@@ -303,7 +303,7 @@ impl<'de> serde::Deserialize<'de> for MaxConnections {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaxConnectionRate {
     Default,
     Manual(usize),
@@ -358,7 +358,7 @@ impl<'de> serde::Deserialize<'de> for MaxConnectionRate {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeepAlive {
     Default,
     Disabled,
@@ -433,7 +433,7 @@ impl<'de> serde::Deserialize<'de> for KeepAlive {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Timeout {
     Default,
     Milliseconds(usize),
@@ -512,7 +512,7 @@ impl<'de> serde::Deserialize<'de> for Timeout {
 }
 
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Ssl {
     pub enabled: bool,
     pub certificate: PathBuf,
