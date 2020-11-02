@@ -151,9 +151,9 @@ private-key = "path/to/cert/key.pem"
         Ok(toml::from_str::<Self>(template)?)
     }
 
-    /// Write the TOML config file template to a new file, to be
-    /// located at `filepath`.  Return a `Error::FileExists(_)`
-    /// error if a file already exists at that location.
+    /// Write the default `TOML` template to a new file, to be located
+    /// at `filepath`.  Return a `Error::FileExists(_)` error if a
+    /// file already exists at that location.
     pub fn write_toml_file<P>(filepath: P) -> AtResult<()>
     where P: AsRef<Path> {
         let filepath = filepath.as_ref();
@@ -167,10 +167,12 @@ private-key = "path/to/cert/key.pem"
         Ok(())
     }
 
-    pub fn override_field<F, V>(field: &mut F, value: V) -> AtResult<()>
+    pub fn override_field<F, V>(
+        field: &mut F,
+        value: V
+    ) -> AtResult<()>
     where F: Parse,
-          V: AsRef<str>
-    {
+          V: AsRef<str> {
         *field = F::parse(value.as_ref())?;
         Ok(())
     }
