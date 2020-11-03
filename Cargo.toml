@@ -1,6 +1,6 @@
 [package]
 name = "actix-settings"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Joey Ezechiels <joey.ezechiels@gmail.com>"]
 edition = "2018"
 description = "a crate to easily manage actix-web's settings from a TOML file and environment variables"
