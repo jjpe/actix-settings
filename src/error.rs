@@ -6,18 +6,6 @@ use std::num::ParseIntError;
 use std::str::ParseBoolError;
 use toml::de::Error as TomlError;
 
-macro_rules! InvalidValue {
-    (expected: $expected:expr, got: $got:expr,) => {
-        crate::AtError::InvalidValue {
-            expected: $expected,
-            got: $got.to_string(),
-            file: file!(),
-            line: line!(),
-            column: column!(),
-        }
-    };
-}
-
 pub type AtResult<T> = std::result::Result<T, AtError>;
 
 #[derive(Clone, Debug)]
@@ -36,6 +24,18 @@ pub enum AtError {
     ParseIntError(ParseIntError),
     ParseAddressError(String),
     TomlError(TomlError),
+}
+
+macro_rules! InvalidValue {
+    (expected: $expected:expr, got: $got:expr,) => {
+        crate::AtError::InvalidValue {
+            expected: $expected,
+            got: $got.to_string(),
+            file: file!(),
+            line: line!(),
+            column: column!(),
+        }
+    };
 }
 
 impl From<IoError> for AtError {
