@@ -8,7 +8,7 @@ Add this to your `Cargo.toml`:
 
 ``` toml
 [dependencies]
-actix-toml = "0.4"
+actix-toml = "0.5"
 actix-web  = "3.1"
 env_logger = "0.8"
 ```
@@ -30,9 +30,9 @@ async fn main() -> std::io::Result<()> {
     let mut settings = Settings::parse_toml("Server.toml")
         .expect("Failed to parse `Settings` from Server.toml");
     // If the environment variable `$APPLICATION__HOSTS` is set,
-    // have its value override the `settings.hosts` setting:
+    // have its value override the `settings.actix.hosts` setting:
     Settings::override_field_with_env_var(
-        &mut settings.hosts,
+        &mut settings.actix.hosts,
         "APPLICATION__HOSTS"
     )?;
     init_logger(&settings);
@@ -58,8 +58,8 @@ async fn main() -> std::io::Result<()> {
 
 /// Initialize the logging infrastructure
 fn init_logger(settings: &Settings) {
-    if !settings.enable_log { return }
-    std::env::set_var("RUST_LOG", match settings.mode {
+    if !settings.actix.enable_log { return }
+    std::env::set_var("RUST_LOG", match settings.actix.mode {
         Mode::Development => "actix_web=debug",
         Mode::Production  => "actix_web=info",
     });
