@@ -78,6 +78,11 @@ built using `actix`.
 Have a look at the `override_extended_field_with_custom_type` test
 in `src/lib.rs` to see how.
 
+## WIP
+
+The main feature that would be nice to have but currently is not implemented,
+is `SSL`-support. If you're interested, please contact me or send a PR.
+
 
 ## Special Thanks
 
