@@ -1,6 +1,6 @@
 use ioe;
 use std::env::VarError;
-use std::io::Error as IoError;
+use std::io::{self, Error as IoError};
 use std::path::PathBuf;
 use std::num::ParseIntError;
 use std::str::ParseBoolError;
@@ -60,4 +60,42 @@ impl From<TomlError> for AtError {
 
 impl From<VarError> for AtError {
     fn from(err: VarError) -> Self { Self::EnvVarError(err) }
+}
+
+
+impl From<AtError> for IoError {
+    fn from(err: AtError) -> Self {
+        match err {
+            AtError::EnvVarError(var_error) => {
+                let msg = format!("Env var error: {}", var_error);
+                IoError::new(io::ErrorKind::InvalidInput, msg)
+            },
+            AtError::FileExists(path_buf) => {
+                let msg = format!("File exists: {}", path_buf.display());
+                IoError::new(io::ErrorKind::AlreadyExists, msg)
+            },
+            AtError::InvalidValue { expected, ref got, file, line, column } => {
+                let msg = format!("Expected {}, got {}  (@ {}:{}:{})",
+                                  expected, got, file, line, column);
+                IoError::new(io::ErrorKind::InvalidInput, msg)
+            },
+            AtError::IoError(io_error) => io_error.into(),
+            AtError::ParseBoolError(parse_bool_error) => {
+                let msg = format!("Failed to parse boolean: {}", parse_bool_error);
+                IoError::new(io::ErrorKind::InvalidInput, msg)
+            },
+            AtError::ParseIntError(parse_int_error) => {
+                let msg = format!("Failed to parse integer: {}", parse_int_error);
+                IoError::new(io::ErrorKind::InvalidInput, msg)
+            },
+            AtError::ParseAddressError(string) => {
+                let msg = format!("Failed to parse address: {}", string);
+                IoError::new(io::ErrorKind::InvalidInput, msg)
+            },
+            AtError::TomlError(toml_error) => {
+                let msg = format!("TOML error: {}", toml_error);
+                IoError::new(io::ErrorKind::InvalidInput, msg)
+            },
+        }
+    }
 }
